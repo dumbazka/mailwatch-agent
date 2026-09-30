@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from db.pending_approvals import create_pending_approval
@@ -16,10 +17,13 @@ async def process_message(message_id: str, force: bool = False) -> str | None:
     Returns the new pending_approval id, or None if the message was filtered
     out. `force=True` (used by the Discord "Re-run" button) skips filtering.
     """
-    service = get_gmail_service()
-    message = get_message(service, message_id)
+    # This process shares one event loop with the Discord bot (see main.py),
+    # so every blocking network/DB call here has to run off-thread or it
+    # freezes the Discord gateway heartbeat.
+    service = await asyncio.to_thread(get_gmail_service)
+    message = await asyncio.to_thread(get_message, service, message_id)
 
-    classification = classify_message(message)
+    classification = await asyncio.to_thread(classify_message, message)
     if not classification.should_draft and not force:
         logger.info("Skipping %s: %s", message_id, classification.reason)
         return None
@@ -30,7 +34,9 @@ async def process_message(message_id: str, force: bool = False) -> str | None:
     excerpt = get_excerpt(message)
 
     draft = await draft_reply(sender, subject, body)
-    pending_id = create_pending_approval(message_id, sender, subject, excerpt, draft)
+    pending_id = await asyncio.to_thread(
+        create_pending_approval, message_id, sender, subject, excerpt, draft
+    )
 
     # Local import: discord_bot.bot also imports this module (for Re-run), so
     # importing it at module load time here would create a circular import.

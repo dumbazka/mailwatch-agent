@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -51,14 +52,14 @@ async def _send_and_finalize(
     text: str,
     sent_via: str,
 ) -> None:
-    service = get_gmail_service()
-    original = get_message(service, pending["gmail_message_id"])
-    send_reply(service, original, text)
+    service = await asyncio.to_thread(get_gmail_service)
+    original = await asyncio.to_thread(get_message, service, pending["gmail_message_id"])
+    await asyncio.to_thread(send_reply, service, original, text)
 
-    record_sent(pending["gmail_message_id"], text, sent_via)
-    set_status(pending["id"], "sent")
+    await asyncio.to_thread(record_sent, pending["gmail_message_id"], text, sent_via)
+    await asyncio.to_thread(set_status, pending["id"], "sent")
 
-    updated = get_pending(pending["id"])
+    updated = await asyncio.to_thread(get_pending, pending["id"])
     await message.edit(embed=_build_embed(updated, status_note=f"Sent by Azka ({sent_via})"), view=None)
 
     if interaction.response.is_done():
@@ -87,7 +88,7 @@ class ScopeChoiceView(discord.ui.View):
         value = self.pending["sender"]
         if scope == "domain":
             value = value.split("@")[-1]
-        add_sender_rule(scope, value, self.rule_type)
+        await asyncio.to_thread(add_sender_rule, scope, value, self.rule_type)
         label = "always-skip" if self.rule_type == "always_skip" else "always-draft"
         await interaction.response.edit_message(
             content=f"Marked `{value}` as {label} ({scope}-level).", view=None
@@ -116,7 +117,7 @@ class ApprovalView(discord.ui.View):
 
     @discord.ui.button(label="Approve", style=discord.ButtonStyle.success, custom_id="mailwatch:approve")
     async def approve(self, interaction: discord.Interaction, _button: discord.ui.Button):
-        pending = get_pending_by_discord_message(str(interaction.message.id))
+        pending = await asyncio.to_thread(get_pending_by_discord_message, str(interaction.message.id))
         if not pending or pending["status"] != "pending":
             await interaction.response.send_message("Already handled.", ephemeral=True)
             return
@@ -127,28 +128,28 @@ class ApprovalView(discord.ui.View):
 
     @discord.ui.button(label="Rewrite", style=discord.ButtonStyle.primary, custom_id="mailwatch:rewrite")
     async def rewrite(self, interaction: discord.Interaction, _button: discord.ui.Button):
-        pending = get_pending_by_discord_message(str(interaction.message.id))
+        pending = await asyncio.to_thread(get_pending_by_discord_message, str(interaction.message.id))
         if not pending or pending["status"] != "pending":
             await interaction.response.send_message("Already handled.", ephemeral=True)
             return
         await interaction.response.defer()
 
-        service = get_gmail_service()
-        original = get_message(service, pending["gmail_message_id"])
+        service = await asyncio.to_thread(get_gmail_service)
+        original = await asyncio.to_thread(get_message, service, pending["gmail_message_id"])
         body = get_plain_text_body(original)
         new_draft = await draft_reply(
             pending["sender"], pending["subject"], body, previous_draft=pending["draft_text"]
         )
-        update_draft(pending["id"], new_draft)
+        await asyncio.to_thread(update_draft, pending["id"], new_draft)
 
-        updated = get_pending(pending["id"])
+        updated = await asyncio.to_thread(get_pending, pending["id"])
         await interaction.message.edit(embed=_build_embed(updated), view=self)
 
     @discord.ui.button(
         label="Reply with text", style=discord.ButtonStyle.secondary, custom_id="mailwatch:reply_text"
     )
     async def reply_with_text(self, interaction: discord.Interaction, _button: discord.ui.Button):
-        pending = get_pending_by_discord_message(str(interaction.message.id))
+        pending = await asyncio.to_thread(get_pending_by_discord_message, str(interaction.message.id))
         if not pending or pending["status"] != "pending":
             await interaction.response.send_message("Already handled.", ephemeral=True)
             return
@@ -158,7 +159,7 @@ class ApprovalView(discord.ui.View):
         label="Always skip sender", style=discord.ButtonStyle.danger, custom_id="mailwatch:skip_sender"
     )
     async def always_skip(self, interaction: discord.Interaction, _button: discord.ui.Button):
-        pending = get_pending_by_discord_message(str(interaction.message.id))
+        pending = await asyncio.to_thread(get_pending_by_discord_message, str(interaction.message.id))
         if not pending:
             await interaction.response.send_message("Couldn't find this item.", ephemeral=True)
             return
@@ -172,7 +173,7 @@ class ApprovalView(discord.ui.View):
         label="Always draft sender", style=discord.ButtonStyle.secondary, custom_id="mailwatch:draft_sender"
     )
     async def always_draft(self, interaction: discord.Interaction, _button: discord.ui.Button):
-        pending = get_pending_by_discord_message(str(interaction.message.id))
+        pending = await asyncio.to_thread(get_pending_by_discord_message, str(interaction.message.id))
         if not pending:
             await interaction.response.send_message("Couldn't find this item.", ephemeral=True)
             return
@@ -189,7 +190,7 @@ class ExpiredView(discord.ui.View):
 
     @discord.ui.button(label="Re-run", style=discord.ButtonStyle.primary, custom_id="mailwatch:rerun")
     async def rerun(self, interaction: discord.Interaction, _button: discord.ui.Button):
-        pending = get_pending_by_discord_message(str(interaction.message.id))
+        pending = await asyncio.to_thread(get_pending_by_discord_message, str(interaction.message.id))
         if not pending:
             await interaction.response.send_message("Couldn't find this item.", ephemeral=True)
             return
@@ -205,12 +206,12 @@ class ExpiredView(discord.ui.View):
 
 async def post_pending_approval(pending_id: str) -> None:
     await bot.wait_until_ready()
-    pending = get_pending(pending_id)
+    pending = await asyncio.to_thread(get_pending, pending_id)
     channel_id = int(settings.discord_confirmation_channel_id)
     channel = bot.get_channel(channel_id) or await bot.fetch_channel(channel_id)
 
     message = await channel.send(embed=_build_embed(pending), view=ApprovalView())
-    set_discord_message_id(pending_id, str(message.id))
+    await asyncio.to_thread(set_discord_message_id, pending_id, str(message.id))
 
 
 @tasks.loop(minutes=10)
@@ -222,8 +223,9 @@ async def reminder_and_expiry_loop():
     confirmation_channel = bot.get_channel(confirmation_id) or await bot.fetch_channel(confirmation_id)
     reminders_channel = bot.get_channel(reminders_id) or await bot.fetch_channel(reminders_id)
 
-    for pending in get_due_reminders(now):
-        set_last_reminder(pending["id"], now)
+    due_reminders = await asyncio.to_thread(get_due_reminders, now)
+    for pending in due_reminders:
+        await asyncio.to_thread(set_last_reminder, pending["id"], now)
         if pending["discord_message_id"]:
             link = (
                 f"https://discord.com/channels/{confirmation_channel.guild.id}/"
@@ -234,8 +236,9 @@ async def reminder_and_expiry_loop():
                 f"is still waiting for a decision. {link}"
             )
 
-    for pending in get_expired(now):
-        set_status(pending["id"], "expired")
+    expired = await asyncio.to_thread(get_expired, now)
+    for pending in expired:
+        await asyncio.to_thread(set_status, pending["id"], "expired")
         if not pending["discord_message_id"]:
             continue
         try:
