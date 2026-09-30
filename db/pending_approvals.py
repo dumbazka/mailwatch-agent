@@ -13,7 +13,10 @@ _KEYS = [c.strip() for c in _COLUMNS.split(",")]
 
 
 def _row_to_dict(row) -> dict:
-    return dict(zip(_KEYS, row))
+    d = dict(zip(_KEYS, row))
+    d["id"] = str(d["id"])  # psycopg returns uuid.UUID; callers (incl. Inngest
+    # step outputs, which must be JSON-serializable) expect a plain string.
+    return d
 
 
 def create_pending_approval(
