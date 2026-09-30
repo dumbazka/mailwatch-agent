@@ -36,7 +36,7 @@ def _load() -> Settings:
             "GOOGLE_OAUTH_TOKEN_FILE", "credentials/gmail_token.json"
         ),
         gemini_api_key=os.environ.get("GEMINI_API_KEY", ""),
-        gemini_model=os.environ.get("GEMINI_MODEL", "gemini-2.0-flash"),
+        gemini_model=os.environ.get("GEMINI_MODEL", "gemini-3.8-flash"),
         discord_bot_token=os.environ.get("DISCORD_BOT_TOKEN", ""),
         discord_confirmation_channel_id=os.environ.get("DISCORD_CONFIRMATION_CHANNEL_ID", ""),
         discord_reminders_channel_id=os.environ.get("DISCORD_REMINDERS_CHANNEL_ID", ""),
