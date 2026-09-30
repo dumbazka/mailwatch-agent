@@ -62,10 +62,9 @@ async def _send_and_finalize(
     updated = await asyncio.to_thread(get_pending, pending["id"])
     await message.edit(embed=_build_embed(updated, status_note=f"Sent by Azka ({sent_via})"), view=None)
 
-    if interaction.response.is_done():
-        await interaction.followup.send("Sent.", ephemeral=True)
-    else:
-        await interaction.response.send_message("Sent.", ephemeral=True)
+    # Every caller defers before reaching here, so the interaction is always
+    # already acknowledged — a plain followup is enough.
+    await interaction.followup.send("Sent.", ephemeral=True)
 
 
 class ScopeChoiceView(discord.ui.View):
@@ -85,12 +84,13 @@ class ScopeChoiceView(discord.ui.View):
         await self._apply(interaction, "domain")
 
     async def _apply(self, interaction: discord.Interaction, scope: str) -> None:
+        await interaction.response.defer()
         value = self.pending["sender"]
         if scope == "domain":
             value = value.split("@")[-1]
         await asyncio.to_thread(add_sender_rule, scope, value, self.rule_type)
         label = "always-skip" if self.rule_type == "always_skip" else "always-draft"
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             content=f"Marked `{value}` as {label} ({scope}-level).", view=None
         )
 
@@ -100,14 +100,20 @@ class ReplyTextModal(discord.ui.Modal, title="Reply with custom text"):
         label="Reply text", style=discord.TextStyle.paragraph, max_length=4000
     )
 
-    def __init__(self, pending: dict, message: discord.Message):
+    def __init__(self, message: discord.Message):
         super().__init__()
-        self.pending = pending
         self.message = message
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
+        # Ack first, before any DB/network call — Discord invalidates the
+        # interaction if it isn't acknowledged within 3 seconds.
+        await interaction.response.defer()
+        pending = await asyncio.to_thread(get_pending_by_discord_message, str(self.message.id))
+        if not pending or pending["status"] != "pending":
+            await interaction.followup.send("Already handled.", ephemeral=True)
+            return
         await _send_and_finalize(
-            interaction, self.pending, self.message, str(self.reply_text), sent_via="custom_text"
+            interaction, pending, self.message, str(self.reply_text), sent_via="custom_text"
         )
 
 
@@ -117,22 +123,22 @@ class ApprovalView(discord.ui.View):
 
     @discord.ui.button(label="Approve", style=discord.ButtonStyle.success, custom_id="mailwatch:approve")
     async def approve(self, interaction: discord.Interaction, _button: discord.ui.Button):
+        await interaction.response.defer()
         pending = await asyncio.to_thread(get_pending_by_discord_message, str(interaction.message.id))
         if not pending or pending["status"] != "pending":
-            await interaction.response.send_message("Already handled.", ephemeral=True)
+            await interaction.followup.send("Already handled.", ephemeral=True)
             return
-        await interaction.response.defer()
         await _send_and_finalize(
             interaction, pending, interaction.message, pending["draft_text"], sent_via="approved_draft"
         )
 
     @discord.ui.button(label="Rewrite", style=discord.ButtonStyle.primary, custom_id="mailwatch:rewrite")
     async def rewrite(self, interaction: discord.Interaction, _button: discord.ui.Button):
+        await interaction.response.defer()
         pending = await asyncio.to_thread(get_pending_by_discord_message, str(interaction.message.id))
         if not pending or pending["status"] != "pending":
-            await interaction.response.send_message("Already handled.", ephemeral=True)
+            await interaction.followup.send("Already handled.", ephemeral=True)
             return
-        await interaction.response.defer()
 
         service = await asyncio.to_thread(get_gmail_service)
         original = await asyncio.to_thread(get_message, service, pending["gmail_message_id"])
@@ -149,21 +155,20 @@ class ApprovalView(discord.ui.View):
         label="Reply with text", style=discord.ButtonStyle.secondary, custom_id="mailwatch:reply_text"
     )
     async def reply_with_text(self, interaction: discord.Interaction, _button: discord.ui.Button):
-        pending = await asyncio.to_thread(get_pending_by_discord_message, str(interaction.message.id))
-        if not pending or pending["status"] != "pending":
-            await interaction.response.send_message("Already handled.", ephemeral=True)
-            return
-        await interaction.response.send_modal(ReplyTextModal(pending, interaction.message))
+        # Showing a modal must be the direct, immediate response to the click
+        # (can't defer first) — status is checked in the modal's on_submit instead.
+        await interaction.response.send_modal(ReplyTextModal(interaction.message))
 
     @discord.ui.button(
         label="Always skip sender", style=discord.ButtonStyle.danger, custom_id="mailwatch:skip_sender"
     )
     async def always_skip(self, interaction: discord.Interaction, _button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
         pending = await asyncio.to_thread(get_pending_by_discord_message, str(interaction.message.id))
         if not pending:
-            await interaction.response.send_message("Couldn't find this item.", ephemeral=True)
+            await interaction.followup.send("Couldn't find this item.", ephemeral=True)
             return
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"Always-skip `{pending['sender']}` — apply to just this address, or the whole domain?",
             view=ScopeChoiceView(pending, "always_skip"),
             ephemeral=True,
@@ -173,11 +178,12 @@ class ApprovalView(discord.ui.View):
         label="Always draft sender", style=discord.ButtonStyle.secondary, custom_id="mailwatch:draft_sender"
     )
     async def always_draft(self, interaction: discord.Interaction, _button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
         pending = await asyncio.to_thread(get_pending_by_discord_message, str(interaction.message.id))
         if not pending:
-            await interaction.response.send_message("Couldn't find this item.", ephemeral=True)
+            await interaction.followup.send("Couldn't find this item.", ephemeral=True)
             return
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"Always-draft `{pending['sender']}` — apply to just this address, or the whole domain?",
             view=ScopeChoiceView(pending, "always_draft"),
             ephemeral=True,
@@ -190,11 +196,11 @@ class ExpiredView(discord.ui.View):
 
     @discord.ui.button(label="Re-run", style=discord.ButtonStyle.primary, custom_id="mailwatch:rerun")
     async def rerun(self, interaction: discord.Interaction, _button: discord.ui.Button):
+        await interaction.response.defer()
         pending = await asyncio.to_thread(get_pending_by_discord_message, str(interaction.message.id))
         if not pending:
-            await interaction.response.send_message("Couldn't find this item.", ephemeral=True)
+            await interaction.followup.send("Couldn't find this item.", ephemeral=True)
             return
-        await interaction.response.defer()
 
         import pipeline  # local import: pipeline imports this module too
 
