@@ -96,6 +96,34 @@ example), not a slash command.
 
 ## Deploying (Phase 6)
 
-Same image, pushed to Railway, pointed at the same `DATABASE_URL`. All
-secrets (Gmail OAuth token, Discord bot token, Gemini key, Neon connection
-string) go in as Railway environment variables — see `Dockerfile`.
+Same Docker image everywhere. All secrets (Neon connection string, Discord
+bot token, Gemini key, the two Gmail OAuth values below) go in as the host's
+environment variables — never committed.
+
+**Host needs to support an always-on background process**, not just
+request-triggered serverless functions: this app holds a persistent Discord
+Gateway connection and runs a 10-minute reminder/expiry loop in-process, so
+it can't sleep between requests. Railway's standard service type works.
+Render's **free** tier doesn't (only Background Workers stay always-on, and
+those need a paid Render plan) — a free always-on VM (e.g. Oracle Cloud's
+Always Free tier) running the same Docker image is the zero-cost option.
+
+**Gmail credentials — no file on the deployed host, so pass JSON directly:**
+1. Locally, you already have `credentials/gmail_oauth_client.json` and
+   `credentials/gmail_token.json` (the latter only exists after you've done
+   the one-time browser consent locally at least once).
+2. On the host, set:
+   ```
+   GOOGLE_OAUTH_CLIENT_SECRETS_JSON=<paste contents of gmail_oauth_client.json>
+   GOOGLE_OAUTH_TOKEN_JSON=<paste contents of gmail_token.json>
+   ```
+   (`cat credentials/gmail_oauth_client.json` / `cat credentials/gmail_token.json` to get the values.)
+3. Leave `GOOGLE_OAUTH_CLIENT_SECRETS_FILE` / `GOOGLE_OAUTH_TOKEN_FILE` unset on the host — they're the local-dev fallback and are ignored once the `_JSON` versions are set.
+4. Since the app stays unverified (personal project, "Testing" mode), Google
+   expires the refresh token after ~7 days. When that happens, re-run the
+   consent flow locally (deleting `credentials/gmail_token.json` first) and
+   update `GOOGLE_OAUTH_TOKEN_JSON` on the host with the new contents.
+
+**Inngest**: once deployed, point Inngest Cloud at the live URL and set
+`INNGEST_EVENT_KEY` / `INNGEST_SIGNING_KEY` from its dashboard (these stay
+blank for local dev against `inngest dev`).

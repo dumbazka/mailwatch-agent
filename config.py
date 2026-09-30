@@ -12,6 +12,11 @@ class Settings:
 
     google_oauth_client_secrets_file: str
     google_oauth_token_file: str
+    # Production (Render/Railway etc.) has no source-controlled file for
+    # these — paste the JSON file's content directly as the env var value.
+    # Local dev leaves these unset and uses the file paths above instead.
+    google_oauth_client_secrets_json: str
+    google_oauth_token_json: str
 
     gemini_api_key: str
     gemini_model: str
@@ -35,6 +40,8 @@ def _load() -> Settings:
         google_oauth_token_file=os.environ.get(
             "GOOGLE_OAUTH_TOKEN_FILE", "credentials/gmail_token.json"
         ),
+        google_oauth_client_secrets_json=os.environ.get("GOOGLE_OAUTH_CLIENT_SECRETS_JSON", ""),
+        google_oauth_token_json=os.environ.get("GOOGLE_OAUTH_TOKEN_JSON", ""),
         gemini_api_key=os.environ.get("GEMINI_API_KEY", ""),
         gemini_model=os.environ.get("GEMINI_MODEL", "gemini-3.8-flash"),
         discord_bot_token=os.environ.get("DISCORD_BOT_TOKEN", ""),
