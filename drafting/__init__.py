@@ -1,3 +1,3 @@
-from .agent import draft_reply
+from .agent import DraftDecision, decide_and_draft, draft_reply
 
-__all__ = ["draft_reply"]
+__all__ = ["DraftDecision", "decide_and_draft", "draft_reply"]

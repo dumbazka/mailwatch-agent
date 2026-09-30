@@ -61,8 +61,21 @@ create table if not exists keyword_rules (
     created_at timestamptz not null default now()
 );
 
+-- Audit trail of every message that was NOT drafted/posted, and why —
+-- whether a cheap heuristic caught it or the LLM triage call rejected it.
+create table if not exists skipped_messages (
+    id uuid primary key default gen_random_uuid(),
+    gmail_message_id text not null,
+    sender text,
+    subject text,
+    reason text,
+    skipped_by text not null check (skipped_by in ('heuristic', 'llm')),
+    created_at timestamptz not null default now()
+);
+
 create index if not exists idx_pending_approvals_status on pending_approvals (status);
 create index if not exists idx_sender_rules_value on sender_rules (value);
+create index if not exists idx_skipped_messages_created_at on skipped_messages (created_at desc);
 
 insert into keyword_rules (keyword) values
     ('job alert'), ('jobs for you'), ('new jobs'), ('new job matches'),

@@ -1,12 +1,14 @@
 import asyncio
 import logging
 
+from db.keyword_rules import add_keyword
 from db.pending_approvals import (
     create_pending_approval,
     get_pending_by_gmail_message,
     reset_pending_approval,
 )
-from drafting.agent import draft_reply
+from db.skipped_messages import record_skip
+from drafting.agent import decide_and_draft
 from filters.rules import classify_message
 from gmail.auth import get_gmail_service
 from gmail.client import get_message
@@ -18,8 +20,9 @@ logger = logging.getLogger(__name__)
 async def process_message(message_id: str, force: bool = False) -> str | None:
     """Classify, draft, and post one Gmail message to Discord for approval.
 
-    Returns the new pending_approval id, or None if the message was filtered
-    out. `force=True` (used by the Discord "Re-run" button) skips filtering.
+    Returns the new pending_approval id, or None if the message was skipped.
+    `force=True` (used by the Discord "Re-run" button) skips both the
+    heuristic filter and the LLM's reject option below.
     """
     # gmail_message_id is unique in pending_approvals. Inngest retries a step
     # that didn't report success in time even if it actually completed, so
@@ -46,17 +49,36 @@ async def process_message(message_id: str, force: bool = False) -> str | None:
     service = await asyncio.to_thread(get_gmail_service)
     message = await asyncio.to_thread(get_message, service, message_id)
 
+    sender, _ = get_sender(message)
+    subject = get_subject(message)
+
+    # Cheap heuristic pass first (free) — also the reason a sender already on
+    # the block list, or matching a known category/header/keyword, never
+    # reaches the LLM call below at all.
     classification = await asyncio.to_thread(classify_message, message)
     if not classification.should_draft and not force:
         logger.info("Skipping %s: %s", message_id, classification.reason)
+        await asyncio.to_thread(
+            record_skip, message_id, sender, subject, classification.reason, "heuristic"
+        )
         return None
 
-    sender, _ = get_sender(message)
-    subject = get_subject(message)
     body = get_plain_text_body(message)
     excerpt = get_excerpt(message)
 
-    draft = await draft_reply(sender, subject, body)
+    # LLM-level safety net: heuristics can't enumerate every bulk sender, so
+    # the same call that drafts the reply also judges whether one's
+    # warranted. No extra cost — this replaces the old draft-only call.
+    decision = await decide_and_draft(sender, subject, body)
+
+    if not decision.should_reply and not force:
+        logger.info("LLM skip for %s: %s", message_id, decision.reason)
+        await asyncio.to_thread(record_skip, message_id, sender, subject, decision.reason, "llm")
+        if decision.suggested_keyword:
+            await asyncio.to_thread(add_keyword, decision.suggested_keyword)
+        return None
+
+    draft = decision.draft
 
     if existing:
         pending_id = await asyncio.to_thread(
