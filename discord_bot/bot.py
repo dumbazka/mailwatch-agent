@@ -213,6 +213,10 @@ class ExpiredView(discord.ui.View):
 async def post_pending_approval(pending_id: str) -> None:
     await bot.wait_until_ready()
     pending = await asyncio.to_thread(get_pending, pending_id)
+    if pending["discord_message_id"]:
+        # Already posted — avoid a duplicate message if this got called twice
+        # (e.g. an Inngest retry) for the same pending item.
+        return
     channel_id = int(settings.discord_confirmation_channel_id)
     channel = bot.get_channel(channel_id) or await bot.fetch_channel(channel_id)
 

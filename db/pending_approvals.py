@@ -34,6 +34,37 @@ def create_pending_approval(
         return str(row[0])
 
 
+def get_pending_by_gmail_message(gmail_message_id: str) -> dict | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            f"select {_COLUMNS} from pending_approvals where gmail_message_id = %s",
+            (gmail_message_id,),
+        ).fetchone()
+    return _row_to_dict(row) if row else None
+
+
+def reset_pending_approval(
+    pending_id: str, sender: str, subject: str, excerpt: str, draft_text: str
+) -> str:
+    """Re-open an existing (expired) row for a Re-run, instead of inserting a
+    duplicate — gmail_message_id is unique, so a fresh insert would conflict."""
+    expires_at = datetime.now(timezone.utc) + APPROVAL_WINDOW
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            update pending_approvals
+            set sender = %s, subject = %s, excerpt = %s, draft_text = %s,
+                status = 'pending', expires_at = %s, discord_message_id = null,
+                last_reminder_at = null
+            where id = %s
+            returning id
+            """,
+            (sender, subject, excerpt, draft_text, expires_at, pending_id),
+        ).fetchone()
+        conn.commit()
+        return str(row[0])
+
+
 def set_discord_message_id(pending_id: str, discord_message_id: str) -> None:
     with get_connection() as conn:
         conn.execute(
