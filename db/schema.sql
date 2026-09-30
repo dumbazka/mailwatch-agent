@@ -53,5 +53,20 @@ create table if not exists sender_rules (
     unique (scope, value, rule_type)
 );
 
+-- Subject/sender-name phrases that force a skip regardless of other signals.
+-- Grows over time as Azka spots more false positives, without a redeploy.
+create table if not exists keyword_rules (
+    id uuid primary key default gen_random_uuid(),
+    keyword text not null unique,
+    created_at timestamptz not null default now()
+);
+
 create index if not exists idx_pending_approvals_status on pending_approvals (status);
 create index if not exists idx_sender_rules_value on sender_rules (value);
+
+insert into keyword_rules (keyword) values
+    ('job alert'), ('jobs for you'), ('new jobs'), ('new job matches'),
+    ('your application'), ('job recommendation'), ('job match'),
+    ('unsubscribe'), ('weekly digest'), ('daily digest'), ('notification digest'),
+    ('newsletter')
+on conflict (keyword) do nothing;

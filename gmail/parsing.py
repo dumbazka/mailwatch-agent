@@ -22,6 +22,22 @@ def get_subject(message: dict) -> str:
     return get_header(message, "Subject") or "(no subject)"
 
 
+def get_sender_display_name(message: dict) -> str:
+    name, _ = parseaddr(get_header(message, "From") or "")
+    return name
+
+
+def is_auto_submitted(message: dict) -> bool:
+    """RFC 3834: automated systems set this on generated mail."""
+    value = get_header(message, "Auto-Submitted")
+    return bool(value) and value.strip().lower() not in ("", "no")
+
+
+def is_bulk_precedence(message: dict) -> bool:
+    value = get_header(message, "Precedence")
+    return bool(value) and value.strip().lower() in ("bulk", "list", "junk")
+
+
 def get_excerpt(message: dict, max_len: int = 300) -> str:
     return message.get("snippet", "")[:max_len]
 
