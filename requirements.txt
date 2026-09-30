@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+inngest
+python-dotenv
+psycopg[binary]
+
+# Gmail
+google-api-python-client
+google-auth-oauthlib
+google-auth-httplib2
+
+# Drafting (Gemini via ADK) — wired up in Phase 3
+google-adk
+google-genai
+
+# Discord bot — wired up in Phase 4
+discord.py
