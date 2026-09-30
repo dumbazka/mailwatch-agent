@@ -14,6 +14,7 @@ class Settings:
     google_oauth_token_file: str
 
     gemini_api_key: str
+    gemini_model: str
 
     discord_bot_token: str
     discord_confirmation_channel_id: str
@@ -35,6 +36,7 @@ def _load() -> Settings:
             "GOOGLE_OAUTH_TOKEN_FILE", "credentials/gmail_token.json"
         ),
         gemini_api_key=os.environ.get("GEMINI_API_KEY", ""),
+        gemini_model=os.environ.get("GEMINI_MODEL", "gemini-2.0-flash"),
         discord_bot_token=os.environ.get("DISCORD_BOT_TOKEN", ""),
         discord_confirmation_channel_id=os.environ.get("DISCORD_CONFIRMATION_CHANNEL_ID", ""),
         discord_reminders_channel_id=os.environ.get("DISCORD_REMINDERS_CHANNEL_ID", ""),
@@ -45,3 +47,7 @@ def _load() -> Settings:
 
 
 settings = _load()
+
+# google-adk / google-genai read the API key from this env var by default.
+if settings.gemini_api_key:
+    os.environ.setdefault("GOOGLE_API_KEY", settings.gemini_api_key)

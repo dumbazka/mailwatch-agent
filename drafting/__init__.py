@@ -1,1 +1,3 @@
-# Phase 3: Gemini-backed reply drafting via Google ADK.
+from .agent import draft_reply
+
+__all__ = ["draft_reply"]

@@ -1,1 +1,3 @@
-# Phase 2: category/header/block-list filtering rules.
+from .rules import Classification, classify_message
+
+__all__ = ["Classification", "classify_message"]

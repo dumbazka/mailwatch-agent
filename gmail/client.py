@@ -24,6 +24,8 @@ def fetch_new_messages(service, start_history_id: str) -> tuple[list[str], str]:
 
     while True:
         try:
+            # labelId="INBOX" keeps this to incoming mail only — otherwise
+            # messageAdded also fires for our own outgoing replies (Sent).
             resp = (
                 service.users()
                 .history()
@@ -31,6 +33,7 @@ def fetch_new_messages(service, start_history_id: str) -> tuple[list[str], str]:
                     userId="me",
                     startHistoryId=start_history_id,
                     historyTypes=["messageAdded"],
+                    labelId="INBOX",
                     pageToken=page_token,
                 )
                 .execute()

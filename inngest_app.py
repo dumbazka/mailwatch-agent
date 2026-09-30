@@ -1,3 +1,4 @@
+import functools
 import logging
 
 import inngest
@@ -6,6 +7,7 @@ from config import settings
 from db.poll_state import filter_unprocessed, get_last_history_id, mark_processed, set_last_history_id
 from gmail import fetch_new_messages, get_gmail_service
 from gmail.client import get_current_history_id
+from pipeline import process_message
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +44,11 @@ async def poll_gmail(ctx: inngest.Context) -> dict:
         "filter-already-processed", lambda: filter_unprocessed(message_ids)
     )
 
-    # Phase 2+ hook: classify/filter, draft, and post to Discord for each
-    # unprocessed message. For now, just record them as processed so the next
-    # poll doesn't see them again.
+    for message_id in unprocessed_ids:
+        await ctx.step.run(
+            f"process-{message_id}", functools.partial(process_message, message_id)
+        )
+
     await ctx.step.run("mark-processed", lambda: mark_processed(unprocessed_ids))
     await ctx.step.run("save-history-id", lambda: set_last_history_id(new_history_id))
 

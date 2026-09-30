@@ -4,7 +4,11 @@ Watches a Gmail inbox, filters out newsletters/promotions, drafts replies with
 Gemini, and posts them to Discord for approval before anything sends. See
 [docs/PRD.md](docs/PRD.md) for the full spec.
 
-## Phase 1 setup (Gmail connection)
+All of Phases 1–4 (Gmail polling, filtering, drafting, Discord approval) are
+implemented. What's left is dropping in your own credentials and testing
+against a real inbox (Phase 5), then deploying to Railway (Phase 6).
+
+## Setup
 
 1. **Python env**
 
@@ -16,29 +20,40 @@ Gemini, and posts them to Discord for approval before anything sends. See
 
 2. **Gmail OAuth**
    - In [Google Cloud Console](https://console.cloud.google.com/), create a project (or use an existing one) and enable the **Gmail API**.
-   - Under *APIs & Services > Credentials*, create an **OAuth client ID** of type **Desktop app**.
-   - Download the JSON and save it as `credentials/gmail_oauth_client.json` (path is configurable via `GOOGLE_OAUTH_CLIENT_SECRETS_FILE`).
-   - First run will open a browser for the consent screen and cache the resulting token at `credentials/gmail_token.json`.
+   - **APIs & Services → OAuth consent screen**: User type **External** → app name → add scopes `https://www.googleapis.com/auth/gmail.readonly` and `https://www.googleapis.com/auth/gmail.send` (via *Add or Remove Scopes*) → add your own Gmail address under **Test users**.
+   - **APIs & Services → Credentials → Create Credentials → OAuth client ID**, type **Desktop app**. Download the JSON.
+   - Save it as `credentials/gmail_oauth_client.json`:
+     ```
+     mkdir -p credentials && mv ~/Downloads/client_secret_*.json credentials/gmail_oauth_client.json
+     ```
+   - First run opens a browser for the consent screen and caches the token at `credentials/gmail_token.json`. Since the app stays unverified (personal project), Google expires that token after 7 days — when that happens the logs will say so and you just re-run once to reauthorize.
 
 3. **Neon (Postgres)**
-   - Create a Neon project and copy the connection string.
-   - Set it as `DATABASE_URL` in `.env`.
+   - Create a Neon project, copy the connection string into `DATABASE_URL` in `.env`.
    - Apply the schema:
-
      ```
      python -m db.connection
      ```
 
-4. **Env file**
+4. **Gemini**
+   - Get an API key from [Google AI Studio](https://aistudio.google.com/apikey).
+   - Set `GEMINI_API_KEY` in `.env`. `GEMINI_MODEL` defaults to `gemini-2.0-flash`.
+
+5. **Discord bot**
+   - [discord.com/developers/applications](https://discord.com/developers/applications) → **New Application** → **Bot** tab → **Reset Token** → copy it into `DISCORD_BOT_TOKEN`.
+   - No privileged gateway intents are needed (the bot only uses message components, not message content).
+   - **OAuth2 → URL Generator**: scope `bot`, permissions `Send Messages`, `Embed Links`, `Read Message History` → open the generated URL to invite it to your server.
+   - Create two text channels, e.g. `#confirmation` and `#reminders`. With Developer Mode on (User Settings → Advanced), right-click each → **Copy Channel ID** → set `DISCORD_CONFIRMATION_CHANNEL_ID` / `DISCORD_REMINDERS_CHANNEL_ID`.
+
+6. **Env file**
 
    ```
    cp .env.example .env
    ```
 
-   Fill in `DATABASE_URL`, `GEMINI_API_KEY` (drafting comes in Phase 3), and
-   leave Discord vars blank for now (Phase 4).
+   Fill in everything from steps 2–5.
 
-5. **Run the poll function locally**
+7. **Run it locally**
 
    In one terminal, start the [Inngest dev server](https://www.inngest.com/docs/dev-server):
 
@@ -46,29 +61,41 @@ Gemini, and posts them to Discord for approval before anything sends. See
    npx inngest-cli@latest dev
    ```
 
-   In another, run the app:
+   In another:
 
    ```
    uvicorn main:app --reload
    ```
 
-   The Inngest dev UI (http://localhost:8288) will show `poll-gmail` running
-   every `POLL_INTERVAL_MINUTES` (default 5). The first run just records a
-   history-ID baseline; subsequent runs fetch and record any new message IDs.
+   The Inngest dev UI (http://localhost:8288) shows `poll-gmail` running every
+   `POLL_INTERVAL_MINUTES` (default 5). The first run just records a
+   history-ID baseline (no backfill of old mail). From then on, new inbox
+   messages that pass filtering get drafted and posted to `#confirmation`.
 
-## Project layout
+## How the pieces fit together
 
-```
-gmail/          OAuth + Gmail API client (History API polling)
-filters/        Phase 2 — newsletter/promo filtering rules
-drafting/       Phase 3 — Gemini/ADK reply drafting
-discord_bot/    Phase 4 — approval buttons, reminders, expiry
-db/             Neon schema + data access
-inngest_app.py  Scheduled poll function
-main.py         FastAPI entrypoint serving Inngest functions
-```
+- `gmail/` — OAuth + Gmail History API polling, sending the final reply.
+- `filters/rules.py` — `classify_message()`: category / `List-Unsubscribe` /
+  block-list / no-reply / always-skip / always-draft logic.
+- `drafting/agent.py` — `draft_reply()`: a Gemini-backed ADK agent that writes
+  the reply text (and rewrites it on request).
+- `pipeline.py` — `process_message()`: glues classify → draft → post-to-Discord
+  together. Used by both the poll loop and the "Re-run" button on an expired item.
+- `discord_bot/bot.py` — the five buttons (Approve, Rewrite, Reply with text,
+  Always skip sender, Always draft sender), the modal for custom text, and the
+  10-minute background loop that sends 6-hour reminders and expires items
+  after 24 hours.
+- `db/` — Neon schema + data access (`poll_state`, `processed_messages`,
+  `pending_approvals`, `sent_replies`, `sender_rules`).
+- `main.py` — runs the Discord bot and the FastAPI/Inngest server together in
+  one process/event loop, matching the PRD's single-container design.
 
-## Build phases
+Assumption made where the PRD left it open: the "manual re-trigger after
+expiry" is a **Re-run button** on the expired Discord message (PRD's own
+example), not a slash command.
 
-See [docs/PRD.md](docs/PRD.md#build-phases) — currently on **Phase 1: Gmail
-connection**.
+## Deploying (Phase 6)
+
+Same image, pushed to Railway, pointed at the same `DATABASE_URL`. All
+secrets (Gmail OAuth token, Discord bot token, Gemini key, Neon connection
+string) go in as Railway environment variables — see `Dockerfile`.
